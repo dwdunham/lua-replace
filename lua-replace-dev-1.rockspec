@@ -1,8 +1,8 @@
 package = "lua-replace"
 version = "dev-1"
 source = {
-  url = "git+https://github.com/dwdunham/lua-replace",
-  tag = "v0.5.0"
+  url = "git://github.com/dwdunham/lua-replace",
+  tag = "v0.5.1"
 }
 description = {
   detailed = [[
