@@ -1,0 +1,8 @@
+return {
+  modules = {
+    ["replace"] = "src/replace/init.lua",
+    ["replace.*"] = "src",
+  },
+  reporter = "html",
+  reportfile = "luacov.report.html"
+}
