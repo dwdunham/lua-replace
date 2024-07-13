@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+
+./scripts/clean
+for i in test/**/*.lua; do busted -c $i; done
+luacov
