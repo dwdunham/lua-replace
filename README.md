@@ -18,14 +18,20 @@ Repo to hold backend substitution code
 
 ## Plans
 * Documentation
-* Separate out package for swap functionality
-* move swap functionality to the new swap package
-* make package for nvim package
-* implement nvim package
+* implement nvim package -- mostly done
 * add test cases for swapword.
   * options
   * better test Suite
   * integrate for busted
+* Abbreviations:
+  * see tpope/abolish
+* Proper README
+*
+
+### Finished
+* Separate out package for swap functionality -- done
+* move swap functionality to the new swap package 
+* make package for nvim package
 * find a way to test coverage. -- luacov: ✅
   * `luarocks install luacov`
   * https://github.com/lunarmodules/luacov
@@ -33,13 +39,9 @@ Repo to hold backend substitution code
   *
   * lua -lluacov test...:
     * `rm luacov.*; for i in test/*.lua; do lua -lluacov $i; done; luacov`
+    * alternate: `rm -r luacov*; for i in test/*.lua; do busted -c $i; done; luacov`
 * learn how to build/include via luarocks
   * ` luarocks write_rockspec --lua-versions='5.1,5.2,5.3,5.4'`
-  *
-* Abbreviations:
-  * see tpope/abolish
-* Proper README
-*
 
 ## Ideas:
 * glob to regex ???

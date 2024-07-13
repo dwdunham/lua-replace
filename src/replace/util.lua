@@ -162,7 +162,7 @@ local function lua_dump(tbl, indent, pretty, json, upper_pretty, indent_incr)
   ---@type number, string|number
   for _, key in pairs(sortable) do
     ---@type any
-    value = tbl[key]
+    local value = tbl[key]
     out = out .. sep .. suffix .. prefix
     sep = ','
     if not is_list then
@@ -272,12 +272,15 @@ local function handle_usage_line(line, state)
     match = it()
     found = true
   end
+  state.is_after = state.is_after or #arg.names > 0
   local out = found and arg.desc or state.is_after and state.after or state.before
   if found then table.insert(state.args, arg) end
   it = string.gmatch(line, '#_## (.*)')
   local desc = it()
   if desc then table.insert(out, desc) end
   it = string.gmatch(line, '#_# (.*) ## (.*)')
+  --- @type string
+  local rest
   desc, rest = it()
   if desc then
     arg.argument = desc
@@ -444,6 +447,27 @@ local function merge(a, b)
   return out
 end
 M.merge = merge
+
+--- Pad a string to a length all on the left end of the string, does not shorten the string
+---@param str string | number
+---@param len integer length resulting string should be
+---@param append any
+---@return string
+local function padleft(str, len, append)
+  append = append or ' '
+  if type(str) ~= 'string' then str = tostring(str) end
+  -- strip out color strings out.
+  local strwocolor = string.gsub(str, '\x1b[^m]*m', '')
+  ---@type string
+  while #strwocolor < len do
+    ---@type string
+    strwocolor = append .. strwocolor
+    ---@type string
+    str = append .. str
+  end
+  return str
+end
+M.padleft = padleft
 
 --- Pad a string to a length all on the right end of the string, does not shorten the string
 ---@param str string | number

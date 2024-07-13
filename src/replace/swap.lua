@@ -50,13 +50,16 @@ local function swap_words(orig, item, repl, options, debug)
   local str = orig
   for _, tuple in pairs(tuples) do
     util.dprint('calling swkc:', util.dump(tuple.pattern), util.dump(tuple.repl))
+    --- @type boolean
+    local local_debug = util.DEBUG; util.DEBUG = options:find('E') ~= nil
     str = M.swap_word_keep_case(str, tuple.pattern, tuple.repl, options, debug)
+    util.DEBUG = local_debug
   end
   return str
 end
 M.swap_words = swap_words
 
---- @return table<'i'|'m'|'x'|'s', number>
+--- @return table<'i'|'m'|'x'|'s', number>, table<string, number>
 local function determine_flags()
   --- @type table<string, string>
   local posix_flags = { i = 'ICASE', m = 'NEWLINE', s = 'NOSUB', x = 'EXTENDED' }
@@ -67,14 +70,15 @@ local function determine_flags()
   for k, v in pairs(posix_flags) do
     out[k] = posix_enum[v]
   end
-  return out
+  return out, posix_enum
 end
-local posix_flags = determine_flags()
+local posix_flags, posix_enum = determine_flags()
 
 --- Find the options that are part of gsub.
---- @param opts string[]
+--- @param options string
 --- @return integer, string
-local function generate_search_options(opts)
+local function generate_search_options(options)
+  local opts = util.split(options or '', '')
   -- uppercase removes flag.
   local flags = { i = true, x = true, s = false, m = false }
   local out = 0
@@ -93,38 +97,19 @@ local function generate_search_options(opts)
   return out, keys;
 end
 
---- split into a string...
---- @generic T
---- @param str string
---- @param bool T
---- @return table<string, T>
-local function mmm(str, bool)
-  local out = {}
-  --- @diagnostic disable-next-line
-  for _, i in pairs(util.split(str, '')) do out[i] = bool end
-  return out
-end
-
 --- @type table<string, string>
 local case_separators = { n = '_', d = '\\.', }
---- @type table<string, boolean>
-local case_no_seps = { P = true, N = true, D = true, C = true, K = true }
---- @type table<string, boolean>
-local gsub_seps = mmm('imsx', true)
 
 --- Create the separator between chunks
---- @param opts string[]
+--- @param opts string
 --- @return string, table<string, boolean>
 local function generate_seperator(opts)
+  opts = string.gsub(opts, 'a', 'apndckul')
+
+  local opt_table = util.split(opts, '')
   --- @type table<string, boolean>
   local options = {}
-  for _, v in pairs(opts) do
-    if v == 'a' then
-      for _, i in pairs(util.split('pndck', '')) do
-        if options[i] == nil then options[i] = true end
-      end
-    end
-    if gsub_seps[v] ~= nil then goto continue end
+  for _, v in pairs(opt_table) do
     if v == 'E' then
       options['E'] = true
     elseif v ~= string.lower(v) and options[v] == nil then
@@ -132,7 +117,6 @@ local function generate_seperator(opts)
     elseif options[v] == nil then
       options[v] = true
     end
-    ::continue::
   end
   local out = ''
   for v, enabled in pairs(options) do
@@ -140,7 +124,7 @@ local function generate_seperator(opts)
     if enabled and t ~= nil then out = out .. t end
   end
   if options['k'] then out = out .. '-' end
-  if #out > 0 then out = '[' .. out .. ']' end
+  if #out > 1 then out = '[' .. out .. ']' end
 
   if options['p'] or options['c'] then out = out .. '?' end
   return out, options;
@@ -165,34 +149,154 @@ local function find_all_atom_starts(str)
 end
 --#endregion find_all_atom_starts
 
+local function check1st_char(str, pattern)
+  return string.match(string.sub(str, 1, 1), pattern)
+end
+
+--- Do a bitwise and on a and b
+--- @param a integer
+--- @param b integer
+--- @return integer
+local function bitand(a, b)
+  local result, bitval = 0, 1;
+  while a > 0 and b > 0 do
+    if a % 2 == 1 and b % 2 == 1 then -- test rightmost bit
+      result = result + bitval        -- set current bit
+    end
+    bitval = bitval * 2 -- shift left
+    a = math.floor(a/2) -- shift right
+    b = math.floor(b/2)
+  end
+  return result
+end
+M.bitand = bitand
+
+--- Do a bitwise or on a and b
+--- @param a integer
+--- @param b integer
+--- @return integer
+local function bitor(a, b)
+  local result, bitval = 0, 1;
+  while a > 0 or b > 0 do
+    if a <= 0 or b <= 0 then
+      result = result + bitval
+    elseif a % 2 == 1 or b % 2 == 1 then -- test rightmost bit
+      result = result + bitval        -- set current bit
+    end
+    bitval = bitval * 2 -- shift left
+    a = math.floor(a/2) -- shift right
+    b = math.floor(b/2)
+  end
+  return result
+end
+M.bitor = bitor
+
+--- Build a table of char,boolean
+--- @param chars string[]
+--- @return table<string, boolean>
+local function build_char_bool_table(chars)
+  --- @type table<string, boolean>
+  local out = {}
+  for i = 1, #chars, 1 do
+    out[chars[i]] = true
+  end
+  return out
+end
+--- Check counts of certain letters
+--- @param item string
+--- @param chars string
+--- @return integer
+local function find_counts(item, chars)
+  local array = util.split(item, '')
+  local checks = build_char_bool_table(brace.expand(chars))
+  local count = 0;
+  for i = 1, #array, 1 do
+    if checks[array[i]] then count = count + 1 end
+  end
+  return count
+end
+
+--- Find all matching positions
+--- @param str string
+--- @param pattern string
+--- @return integer[]
+local function gfind(str, pattern)
+  local out = {}
+  local idx = 1
+  while true do
+    local s = string.find(str, pattern, idx)
+    if s == nil then
+      return out
+    end
+    idx = s + 1
+    table.insert(out, s)
+  end
+end
+
+--- Check upper case counts match between strings
+--- @param found string
+--- @param orig string
+--- @param options table<string, boolean>
+--- @return boolean
+local function check_counts(found, orig, options)
+  local f_min = string.gsub(found, '[._-]', '')
+  local o_min = string.gsub(orig, '[._-]', '')
+  local f_idxs = gfind(f_min, '[A-Z]')
+  local o_idxs = gfind(o_min, '[A-Z]')
+  util.dprint(util.ldump('options:', options, 'idxs:', { f = f_idxs, o = o_idxs }))
+  if (#f_idxs == 0 and (options.l or options.i)) or (#f_idxs == #f_min and (options.u or options.i)) then
+    util.dprint('returning early because options.i or something')
+    return true
+  end
+  -- Special case for first letter of the first word
+  if f_idxs[1] ~= 1 and o_idxs[1] == 1 and options.c then
+    table.insert(f_idxs, 1, 1)
+  elseif f_idxs[1] == 1 and o_idxs[1] ~= 1 and options.p then
+    table.insert(o_idxs, 1, 1)
+  end
+  util.dprint(util.ldump('idxs:', { f = f_idxs, o = o_idxs, fn = #f_idxs, on = #o_idxs }))
+  if #f_idxs ~= #o_idxs then
+    return false
+  end
+  for i = 1, #f_idxs, 1 do
+    util.dprint('checking:', i, 'f:', f_idxs[i], 'o:', o_idxs[i])
+    if f_idxs[i] ~= o_idxs[i] then return false end
+  end
+  util.dprint('returning true from check counts')
+  return true
+end
+
 --#region swkc: Take a string and a pattern and replace all patterns...
 --- @param orig string
 --- @param item string
 --- @param repl string
---- @param options string values: imsxUX | P - pascal, n - snake, D - dot, C - camel, K - kebab, E--deep debug
+--- @param options string values: imsx | P - pascal, n - snake, D - dot, C - camel, K - kebab, E--deep debug, u -- upper case, l -- lowercase, i -- case insentive
 --- @param debug boolean?
 --- @return string
 local function swap_word_keep_case(orig, item, repl, options, debug)
-  local opts = util.split(options, '')
-  local ssep, lopts = generate_seperator(opts)
+  local ssep, lopts = generate_seperator(options)
   -- Generate search options.
-  local x = util.DEBUG; util.DEBUG = lopts['E'] or false
-  local gsub_options = generate_search_options(opts);
-  util.DEBUG = x
+  local gsub_options, gsub_key = generate_search_options(opts);
+  if options == 'I' then
+    return rex.gsub(orig, item, repl, gsub_options)
+  end
 
-
-  util.DEBUG = debug or false
-  -- TODO: add controls for which alterations to do... k,p,_,.,...
-  util.dprint('handling: ' .. orig .. ', pattern: ' .. item .. ', repls: ' .. repl .. ', options: ' .. options .. ';gsubOptions: ' .. gsub_options)
+  if debug then util.DEBUG = true end
+  --util.dprint('handling: ' .. orig .. ', pattern: ' .. item .. ', repls: ' .. repl .. ', options: ' .. options .. ';gsubOptions: ' .. gsub_options)
   -- gsub(item, pattern, function,
   --- @type string
   local pattern = rex.gsub(item, '(\\w)([(]?[A-Z])', function(w1, w2) return w1 .. ssep .. w2 end)
   local atom_starts = find_all_atom_starts(item)
   --if string.sub(pattern, 1, 1) == '(' and string.sub(pattern, #pattern, #pattern)
   if string.find(pattern, '(', nil, true) ~= nil then pattern = '(' .. pattern .. ')' end
-  util.dprint('xxx:', pattern, "'"..ssep.."'", util.dump(lopts))
-  return rex.gsub(orig, pattern, function(found, ...)
+  --util.dprint('xxx:', pattern, "'"..ssep.."'", util.dump(lopts))
+  --print(util.xdump('opts:', gsub_options, opts, 'lopts:', lopts, 'options:', options, 'orig:', orig, 'pattern:', pattern, 'gsub_key:', gsub_key))
+  local gsub_call_options = bitor(gsub_options, posix_enum['ICASE'])
+  util.dprint(util.ldump('#a05', pattern, 'go:', gsub_options, posix_enum['ICASE'], gsub_call_options, bitand(gsub_call_options, posix_enum['ICASE']), 'normal gsub result:', rex.gsub(orig, pattern, repl)))
+  --- @type string
+  local result = rex.gsub(orig, pattern, function(found, ...)
     local tab = { ... }
+    util.dprint(util.xdump('found(st):', found, 'rest:', ...)) -- TODO: remove
     local out = repl
     if #tab > 0 then
       for idx, match in pairs(tab) do
@@ -203,8 +307,13 @@ local function swap_word_keep_case(orig, item, repl, options, debug)
         end
         out = string.gsub(repl, '\\'..idx, match)
       end
+    elseif #tab == 0 and not check_counts(found, item, lopts) then
+      util.dprint('checks failed')
+      return found
     end
+    --- Handle kebab-case
     if string.find(found, '-') and lopts['k'] then
+      util.dprint('HANDLING kebab-case', found, repl)
       --- @type string
       out = rex.gsub(out, '(\\w)([A-Z])', function(w1, w2) return w1 .. '-' .. w2; end)
       if (not string.find(repl, '-')) and string.find(out, '-') == 1 then
@@ -212,6 +321,7 @@ local function swap_word_keep_case(orig, item, repl, options, debug)
       end
     end
     if string.find(found, '.', nil, true) and lopts['d'] then
+      --print('HANDLING dot.case', found)
       --- @type string
       out = rex.gsub(out, '(\\w)([A-Z])', function(w1, w2) return w1 .. '.' .. w2; end)
       if (not string.find(repl, '.', nil, true)) and string.find(out, '.', nil, true) == 1 then
@@ -225,20 +335,34 @@ local function swap_word_keep_case(orig, item, repl, options, debug)
         out = string.sub(out, 2)
       end
     end
+    if lopts['i'] ~= nil and not lopts['i'] then
+      if string.lower(found) ~= found and string.upper(found) ~= found then
+        --print('found(ii):', found, 'out:', found, 'RETURNING')
+        return found
+      end
+      --print('found(ii):', found, 'out:', out)
+    end
     if not string.match(found, '[A-Z]') then
+      local x = out
       out = string.lower(out)
+      --print('found(lc):', found, 'out:', out, 'x:', x)
     end
     if not string.match(found, '[a-z]') then
+      local x = out
       out = string.upper(out)
+      --print('found(uc):', found, 'out:', out, 'x:', x)
     end
 
-    if string.match(string.sub(found, 1, 1), '[a-z]') then
+    if check1st_char(found, '[a-z]') and check1st_char(out, '[A-Z]') then
+      local x = out
       out = string.lower(string.sub(out, 1, 1)) .. string.sub(out, 2)
+      --print('found(1c):', found, 'out:', x, out)
     end
 
-    util.dprint('\x1b[38;2;170;170;0m(' .. item .. '){' .. found .. '}[' .. out .. ']\x1b[0m')
+    --print(util.ldump('Blue', item, found, out, lopts))
     return out
-  end, nil, gsub_options)
+  end, nil, gsub_call_options)
+  return result
 end
 M.swap_word_keep_case = swap_word_keep_case;
 --#endregion swkc
